@@ -62,11 +62,11 @@ typedef struct stateStruct {
     int cycles; /* number of cycles run so far */
 } stateType;
 
-int field0(int instruction) { return( (instruction>>19) & 0x7); } //RegA
+int field0(int instruction) { return( (instruction>>19) & 0x7); }
 
-int field1(int instruction) { return( (instruction>>16) & 0x7); } //RegB
+int field1(int instruction) { return( (instruction>>16) & 0x7); }
 
-int field2(int instruction) { return(instruction & 0xFFFF); } //Offsetfield
+int field2(int instruction) { return(instruction & 0xFFFF); }
 
 int opcode(int instruction) { return(instruction>>22); }
 
@@ -152,8 +152,8 @@ int convertNum(int num)
 //-------------------------------------------------------------
 
 void run(stateType state);
-void queueDataHazard(int hazards[], int reg);
-int checkDataHazard(int hazards[], int reg);
+void queueDataHazard(int hazards[], int instr);
+int checkDataHazard(int hazards[], int instr);
 
 int main(int argc, char* argv[]) {
 
@@ -205,24 +205,8 @@ int main(int argc, char* argv[]) {
 void run(stateType state) {
 
     stateType newState;
-    int dataHazards[4] = {-1,-1,-1,-1};
-
-    //Data Hazard LW Stall - Throws off labels. Need to implement noop during execution
-    /*
-    for(int i = 0; i < state.numMemory; ++i) {
-        if(opcode(state.instrMem[i]) == LW) {
-            if( ( field0(state.instrMem[i+1]) == field1(state.instrMem[i]) ) ||
-                ( field1(state.instrMem[i+1]) == field1(state.instrMem[i]) && opcode(state.instrMem[i+1]) != LW ) ) {
-                    ++state.numMemory;
-                    for(int j = state.numMemory; j > i; --j) {
-                        state.instrMem[j] = state.instrMem[j-1];
-                    }
-                    state.instrMem[i+1] = NOOPINSTRUCTION;
-            }
-        }
-        state.dataMem[i] = state.instrMem[i];
-    }
-    */
+    int detectDataHazards[3] = {-1,-1,-1};
+    int dataHazardPipeline[3] = {-1,-1,-1};
 
     for(int i = 0; i < state.numMemory; ++i) {
         printf("memory[%d]=%d\n",i,state.instrMem[i]);
@@ -252,7 +236,7 @@ void run(stateType state) {
 
         newState.IFID.instr = state.instrMem[state.pc];
         newState.IFID.pcPlus1 = state.pc + 1;
-        newState.pc = state.pc + 1;
+        //newState.pc = state.pc + 1;
 
         /* --------------------- ID stage --------------------- */
 
@@ -261,221 +245,198 @@ void run(stateType state) {
         newState.IDEX.readRegA = state.reg[field0(state.IFID.instr)];
         newState.IDEX.readRegB = state.reg[field1(state.IFID.instr)];
         newState.IDEX.offset = convertNum(field2(state.IFID.instr));
-
-        switch(opcode(state.IFID.instr)) {
-            case ADD:
-                queueDataHazard(dataHazards, field2(state.IFID.instr));
-            case NAND:
-                queueDataHazard(dataHazards, field2(state.IFID.instr));
-            case LW:
-                queueDataHazard(dataHazards, field1(state.IFID.instr));
-            case SW:
-                queueDataHazard(dataHazards, 0);
-            case BEQ:
-                queueDataHazard(dataHazards, 0);
-            case HALT:
-                queueDataHazard(dataHazards, 0);
-            case NOOP:
-                queueDataHazard(dataHazards, 0);
-        }
+        checkDataHazard(detectDataHazards, state.IFID.instr);
+        //queueDataHazard(detectDataHazards, state.IFID.instr);
         
         /* --------------------- EX stage --------------------- */
 
         newState.EXMEM.instr = state.IDEX.instr;
         newState.EXMEM.branchTarget = state.IDEX.pcPlus1 + state.IDEX.offset;
-        int topALU, botALU;
-        switch(opcode(state.IDEX.instr)) {
+        newState.EXMEM.readRegB = state.IDEX.readRegB;
 
+        int topALU, botALU, hazardA, hazardB;
+        switch(opcode(state.IDEX.instr)) {
             case ADD:
                 topALU = state.IDEX.readRegA;
                 botALU = state.IDEX.readRegB;
-                if(opcode(state.EXMEM.instr) == ADD || opcode(state.EXMEM.instr) == NAND) {
-                    if(field2(state.EXMEM.instr) == field0(state.IDEX.instr)) {
+                hazardA = checkDataHazard(detectDataHazards, field0(state.IDEX.instr));
+                hazardB = checkDataHazard(detectDataHazards, field1(state.IDEX.instr));
+                switch(hazardA) {
+                    case -1:
+                        break;
+                    case 0:
                         topALU = state.EXMEM.aluResult;
-                    }
-                    if(field2(state.EXMEM.instr) == field1(state.IDEX.instr)) {
+                        break;
+                    case 1:
+                        topALU = state.MEMWB.writeData;
+                        break;
+                    case 2:
+                        topALU = state.WBEND.writeData;
+                        break;
+                }
+                switch(hazardB) {
+                    case -1:
+                        break;
+                    case 0:
                         botALU = state.EXMEM.aluResult;
-                    }
-                }
-                else if(opcode(state.MEMWB.instr) == ADD || opcode(state.MEMWB.instr) == NAND) {
-                    if(field2(state.MEMWB.instr) == field0(state.IDEX.instr)) {
-                        topALU = state.MEMWB.writeData;
-                    }
-                    if(field2(state.MEMWB.instr) == field1(state.IDEX.instr)) {
+                        break;
+                    case 1:
                         botALU = state.MEMWB.writeData;
-                    }
-                }
-                else if(opcode(state.MEMWB.instr) == LW) {
-                    if(field1(state.MEMWB.instr) == field0(state.IDEX.instr)) {
-                        topALU = state.MEMWB.writeData;
-                    }
-                    if(field1(state.MEMWB.instr) == field1(state.IDEX.instr)) {
-                        botALU = state.MEMWB.writeData;
-                    }
-                }
-                else if(opcode(state.WBEND.instr) == ADD || opcode(state.WBEND.instr) == NAND) {
-                    if(field2(state.WBEND.instr) == field0(state.IDEX.instr)) {
-                        topALU = state.WBEND.writeData;
-                    }
-                    if(field2(state.WBEND.instr) == field1(state.IDEX.instr)) {
+                        break;
+                    case 2:
                         botALU = state.WBEND.writeData;
-                    }
-                }
-                else if(opcode(state.WBEND.instr) == LW) {
-                    if(field1(state.WBEND.instr) == field0(state.IDEX.instr)) {
-                        topALU = state.WBEND.writeData;
-                    }
-                    if(field1(state.WBEND.instr) == field1(state.IDEX.instr)) {
-                        botALU = state.WBEND.writeData;
-                    }
+                        break;
                 }
                 newState.EXMEM.aluResult = topALU + botALU;
                 break;
             case NAND:
                 topALU = state.IDEX.readRegA;
                 botALU = state.IDEX.readRegB;
-                //ADD or NAND 1 instruction ahead writing to regA or regB
-                if(opcode(state.EXMEM.instr) == ADD || opcode(state.EXMEM.instr) == NAND) {
-                    if(field2(state.EXMEM.instr) == field0(state.IDEX.instr)) {
+                hazardA = checkDataHazard(detectDataHazards, field0(state.IDEX.instr));
+                hazardB = checkDataHazard(detectDataHazards, field1(state.IDEX.instr));
+                switch(hazardA) {
+                    case -1:
+                        break;
+                    case 0:
                         topALU = state.EXMEM.aluResult;
-                    }
-                    if(field2(state.EXMEM.instr) == field1(state.IDEX.instr)) {
+                        break;
+                    case 1:
+                        topALU = state.MEMWB.writeData;
+                        break;
+                    case 2:
+                        topALU = state.WBEND.writeData;
+                        break;
+                }
+                switch(hazardB) {
+                    case -1:
+                        break;
+                    case 0:
                         botALU = state.EXMEM.aluResult;
-                    }
-                }
-                //ADD or NAND 2 instructions ahead writing to regA or regB
-                else if(opcode(state.MEMWB.instr) == ADD || opcode(state.MEMWB.instr) == NAND) {
-                    if(field2(state.MEMWB.instr) == field0(state.IDEX.instr)) {
-                        topALU = state.MEMWB.writeData;
-                    }
-                    if(field2(state.MEMWB.instr) == field1(state.IDEX.instr)) {
+                        break;
+                    case 1:
                         botALU = state.MEMWB.writeData;
-                    }
-                }
-                //LW 2 instructions ahead writing to regA or regB
-                else if(opcode(state.MEMWB.instr) == LW) {
-                    if(field1(state.MEMWB.instr) == field0(state.IDEX.instr)) {
-                        topALU = state.MEMWB.writeData;
-                    }
-                    if(field1(state.MEMWB.instr) == field1(state.IDEX.instr)) {
-                        botALU = state.MEMWB.writeData;
-                    }
-                }
-                //ADD or NAND 3 instructions ahead writing to regA or regB
-                else if(opcode(state.WBEND.instr) == ADD || opcode(state.WBEND.instr) == NAND) {
-                    if(field2(state.WBEND.instr) == field0(state.IDEX.instr)) {
-                        topALU = state.WBEND.writeData;
-                    }
-                    if(field2(state.WBEND.instr) == field1(state.IDEX.instr)) {
+                        break;
+                    case 2:
                         botALU = state.WBEND.writeData;
-                    }
-                }
-                //LW 3 instructions ahead writing to regA or regB
-                else if(opcode(state.WBEND.instr) == LW) {
-                    if(field1(state.WBEND.instr) == field0(state.IDEX.instr)) {
-                        topALU = state.WBEND.writeData;
-                    }
-                    if(field1(state.WBEND.instr) == field1(state.IDEX.instr)) {
-                        botALU = state.WBEND.writeData;
-                    }
+                        break;
                 }
                 newState.EXMEM.aluResult = ~(topALU & botALU);
                 break;
             case LW:
                 topALU = state.IDEX.readRegA;
                 botALU = state.IDEX.offset;
-                //ADD or NAND 1 instruction ahead writing to regA
-                if(opcode(state.EXMEM.instr) == ADD || opcode(state.EXMEM.instr) == NAND) {
-                    if(field2(state.EXMEM.instr) == field0(state.IDEX.instr)) {
+                hazardA = checkDataHazard(detectDataHazards, field0(state.IDEX.instr));
+                switch(hazardA) {
+                    case -1:
+                        break;
+                    case 0:
                         topALU = state.EXMEM.aluResult;
-                    }
-                }
-                //ADD or NAND 2 instructions ahead writing to regA
-                else if(opcode(state.MEMWB.instr) == ADD || opcode(state.MEMWB.instr) == NAND) {
-                    if(field2(state.MEMWB.instr) == field0(state.IDEX.instr)) {
+                        break;
+                    case 1:
                         topALU = state.MEMWB.writeData;
-                    }
-                }
-                //LW 2 instructions ahead writing to regA or regB
-                else if(opcode(state.MEMWB.instr) == LW) {
-                    if(field1(state.MEMWB.instr) == field0(state.IDEX.instr)) {
-                        topALU = state.MEMWB.writeData;
-                    }
-                }
-                //ADD or NAND 3 instructions ahead writing to regA
-                if(opcode(state.WBEND.instr) == ADD || opcode(state.WBEND.instr) == NAND) {
-                    if(field2(state.WBEND.instr) == field0(state.IDEX.instr)) {
+                        break;
+                    case 2:
                         topALU = state.WBEND.writeData;
-                    }
-                }
-                //LW 3 instructions ahead writing to regA or regB
-                else if(opcode(state.WBEND.instr) == LW) {
-                    if(field1(state.WBEND.instr) == field0(state.IDEX.instr)) {
-                        topALU = state.WBEND.writeData;
-                    }
+                        break;
                 }
                 newState.EXMEM.aluResult = topALU + botALU;
                 break;
             case SW:
                 topALU = state.IDEX.readRegA;
                 botALU = state.IDEX.offset;
-                //ADD or NAND 1 instruction ahead writing to regA
-                if(opcode(state.EXMEM.instr) == ADD || opcode(state.EXMEM.instr) == NAND) {
-                    if(field2(state.EXMEM.instr) == field0(state.IDEX.instr)) {
+                hazardA = checkDataHazard(detectDataHazards, field0(state.IDEX.instr));
+                hazardB = checkDataHazard(detectDataHazards, field1(state.IDEX.instr));
+                switch(hazardA) {
+                    case -1:
+                        break;
+                    case 0:
                         topALU = state.EXMEM.aluResult;
-                    }
-                }
-                //ADD or NAND 2 instructions ahead writing to regA
-                else if(opcode(state.MEMWB.instr) == ADD || opcode(state.MEMWB.instr) == NAND) {
-                    if(field2(state.MEMWB.instr) == field0(state.IDEX.instr)) {
+                        break;
+                    case 1:
                         topALU = state.MEMWB.writeData;
-                    }
-                }
-                //LW 2 instructions ahead writing to regA or regB
-                else if(opcode(state.MEMWB.instr) == LW) {
-                    if(field1(state.MEMWB.instr) == field0(state.IDEX.instr)) {
-                        topALU = state.MEMWB.writeData;
-                    }
-                }
-                //ADD or NAND 3 instructions ahead writing to regA
-                if(opcode(state.WBEND.instr) == ADD || opcode(state.WBEND.instr) == NAND) {
-                    if(field2(state.WBEND.instr) == field0(state.IDEX.instr)) {
+                        break;
+                    case 2:
                         topALU = state.WBEND.writeData;
-                    }
+                        break;
                 }
-                //LW 3 instructions ahead writing to regA or regB
-                else if(opcode(state.WBEND.instr) == LW) {
-                    if(field1(state.WBEND.instr) == field0(state.IDEX.instr)) {
-                        topALU = state.WBEND.writeData;
-                    }
+                switch(hazardB) {
+                    case -1:
+                        break;
+                    case 0:
+                        botALU = state.EXMEM.aluResult;
+                        break;
+                    case 1:
+                        botALU = state.MEMWB.writeData;
+                        break;
+                    case 2:
+                        botALU = state.WBEND.writeData;
+                        break;
                 }
                 newState.EXMEM.aluResult = topALU + botALU;
                 break;
+            case BEQ:
+                //TODO: Check data hazards
+                //if(state.IDEX.readRegA == state.IDEX.readRegB) newState.pc = state.IDEX.pcPlus1 + state.IDEX.offset;
+                //else newState.pc = state.pc + 1;
+                break;
+            case HALT:
+                //newState.pc = state.pc + 1;
+                break;
+            case NOOP:
+                //newState.pc = state.pc + 1;
+                break;
 
         }
-        newState.EXMEM.readRegB = state.IDEX.readRegB;
+
+        switch(opcode(state.IDEX.instr)) {
+            case ADD:
+                queueDataHazard(detectDataHazards, field2(state.IDEX.instr));
+                break;
+            case NAND:
+                queueDataHazard(detectDataHazards, field2(state.IDEX.instr));
+                break;
+            case LW:
+                queueDataHazard(detectDataHazards, field1(state.IDEX.instr));
+                break;
+            case SW:
+                queueDataHazard(detectDataHazards, 0);
+                break;
+            case BEQ:
+                queueDataHazard(detectDataHazards, 0);
+                break;
+            case HALT:
+                queueDataHazard(detectDataHazards, 0);
+                break;
+            case NOOP:
+                queueDataHazard(detectDataHazards, 0);
+                break;
+        }
 
         /* --------------------- MEM stage --------------------- */
 
         newState.MEMWB.instr = state.EXMEM.instr;
-        switch(opcode(state.EXMEM.instr)) {
 
+        switch(opcode(state.EXMEM.instr)) {
             case ADD:
                 newState.MEMWB.writeData = state.EXMEM.aluResult;
+                //newState.pc = state.pc + 1;
                 break;
             case NAND:
                 newState.MEMWB.writeData = state.EXMEM.aluResult;
+                //newState.pc = state.pc + 1;
                 break;
             case LW:
                 newState.MEMWB.writeData = state.dataMem[state.EXMEM.aluResult];
+                //newState.pc = state.pc + 1;
                 break;
             case SW:
                 newState.dataMem[state.EXMEM.aluResult] = state.EXMEM.readRegB;
+                //newState.pc = state.pc + 1;
                 break;
             case BEQ:
-                newState.pc = state.EXMEM.branchTarget;
+                //if(state.EXMEM.aluResult == state.EXMEM.readRegB*2) newState.pc = state.EXMEM.branchTarget;
+                //else newState.pc = state.pc + 1;
                 break;
-
         }
 
         /* --------------------- WB stage --------------------- */
@@ -483,7 +444,6 @@ void run(stateType state) {
         newState.WBEND.instr = state.MEMWB.instr;
         newState.WBEND.writeData = state.MEMWB.writeData;
         switch(opcode(state.MEMWB.instr)) {
-
             case ADD:
                 newState.reg[field2(state.MEMWB.instr)] = state.MEMWB.writeData;
                 break;
@@ -493,7 +453,6 @@ void run(stateType state) {
             case LW:
                 newState.reg[field1(state.MEMWB.instr)] = state.MEMWB.writeData;
                 break;
-
         }
 
         state = newState; /* this is the last statement before end of the loop.
@@ -504,17 +463,21 @@ void run(stateType state) {
 
 }
 
-void queueDataHazard(int hazards[], int reg) {
-    hazards[3] = hazards[2];
-    hazards[2] = hazards[1];
-    hazards[1] = hazards[0];
-    hazards[0] = reg;
+void queuePipeline(int pipe[], int val) {
+    pipe[2] = pipe[1];
+    pipe[1] = pipe[0];
+    pipe[0] = val;
 }
 
 //Returns -1 if no hazards found
-int checkDataHazards(int hazards[], int reg) {
+int checkDataHazard(int hazards[], int instr) {
+    int hazardType;
     for(int i = 0; i < 3; ++i) {
-        if(hazards[i] == reg && reg != 0) return i;
+        if(hazards[i] == 0) continue;
+        else if(hazards[i] == field0(instr)) {
+            queuePipeline();
+        }
+        else if(hazards[i] == field1(instr) && opcode(instr) != LW)
     }
-    return -1;
+    return hazardType;
 }

@@ -288,7 +288,8 @@ void run(stateType state) {
             }
         }
         else {
-            botALU = 0;
+            if (opcode(state.IDEX.instr) == LW || opcode(state.IDEX.instr) == SW) botALU = state.IDEX.offset;
+            else botALU = 0;
             newState.EXMEM.readRegB = 0;
         }
 

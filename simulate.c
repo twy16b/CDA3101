@@ -232,35 +232,30 @@ void run(stateType state) {
 
         /* --------------------- IF stage --------------------- */
 
-        newState.IFID.instr = state.instrMem[state.pc];
-        printf("Fetching instruction at pc %d:",state.pc);
-        printInstruction(state.instrMem[state.pc]);
+        if (opcode(state.EXMEM.instr) == BEQ && state.EXMEM.aluResult == state.EXMEM.readRegB*2) {
+            newState.IFID.instr = NOOPINSTRUCTION;
+            newState.IDEX.instr = NOOPINSTRUCTION;
+            newState.EXMEM.instr = NOOPINSTRUCTION;
+            newState.pc = state.EXMEM.branchTarget;
+        }
+        else if(opcode(state.IDEX.instr) == LW) {
+            printf("Stalling one cycle\n");
+            newState.IDEX.instr = NOOPINSTRUCTION;
+        }
+        else {
+            newState.IFID.instr = state.instrMem[state.pc];
+            newState.pc = state.pc + 1;
+        }
+
         newState.IFID.pcPlus1 = state.pc + 1;
 
         /* --------------------- ID stage --------------------- */
 
-        if (opcode(state.EXMEM.instr) == BEQ && state.EXMEM.aluResult == state.EXMEM.readRegB*2) {
-            newState.pc = state.EXMEM.branchTarget;
-        }
-        else if(opcode(state.IDEX.instr) == LW) {
-            if( (field1(state.IDEX.instr) == field0(state.IFID.instr)) ||
-                (field1(state.IDEX.instr) == field1(state.IFID.instr) && opcode(state.IFID.instr) != LW) ) {
-                    newState.pc = state.pc;
-                    newState.IDEX.instr = NOOPINSTRUCTION;
-                    newState.IDEX.pcPlus1 = state.IFID.pcPlus1;
-                    newState.IDEX.readRegA = 0;
-                    newState.IDEX.readRegB = 0;
-                    newState.IDEX.offset = 0;
-                }
-        }
-        else {
-            newState.pc = state.pc + 1;
-            newState.IDEX.instr = state.IFID.instr;
-            newState.IDEX.pcPlus1 = state.IFID.pcPlus1;
-            newState.IDEX.readRegA = state.reg[field0(state.IFID.instr)];
-            newState.IDEX.readRegB = state.reg[field1(state.IFID.instr)];
-            newState.IDEX.offset = convertNum(field2(state.IFID.instr));
-        }
+        newState.IDEX.instr = state.IFID.instr;
+        newState.IDEX.pcPlus1 = state.IFID.pcPlus1;
+        newState.IDEX.readRegA = state.reg[field0(state.IFID.instr)];
+        newState.IDEX.readRegB = state.reg[field1(state.IFID.instr)];
+        newState.IDEX.offset = convertNum(field2(state.IFID.instr));
         
         /* --------------------- EX stage --------------------- */
 

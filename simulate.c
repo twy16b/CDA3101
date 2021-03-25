@@ -232,30 +232,32 @@ void run(stateType state) {
 
         /* --------------------- IF stage --------------------- */
 
-        if (opcode(state.EXMEM.instr) == BEQ && state.EXMEM.aluResult == state.EXMEM.readRegB*2) {
-            newState.IFID.instr = NOOPINSTRUCTION;
-            newState.IDEX.instr = NOOPINSTRUCTION;
-            newState.EXMEM.instr = NOOPINSTRUCTION;
-            newState.pc = state.EXMEM.branchTarget;
-        }
-        else if(opcode(state.IDEX.instr) == LW) {
-            printf("Stalling one cycle\n");
-            newState.IDEX.instr = NOOPINSTRUCTION;
-        }
-        else {
-            newState.IFID.instr = state.instrMem[state.pc];
-            newState.pc = state.pc + 1;
-        }
-
+        newState.IFID.instr = state.instrMem[state.pc];
         newState.IFID.pcPlus1 = state.pc + 1;
 
         /* --------------------- ID stage --------------------- */
 
-        newState.IDEX.instr = state.IFID.instr;
-        newState.IDEX.pcPlus1 = state.IFID.pcPlus1;
-        newState.IDEX.readRegA = state.reg[field0(state.IFID.instr)];
-        newState.IDEX.readRegB = state.reg[field1(state.IFID.instr)];
-        newState.IDEX.offset = convertNum(field2(state.IFID.instr));
+        if(opcode(state.IDEX.instr) == LW) {
+            if( (field1(state.IDEX.instr) == field0(state.IFID.instr)) ||
+                (field1(state.IDEX.instr) == field1(state.IFID.instr) && opcode(state.IFID.instr) != LW) ) {
+                    newState.IFID.instr = state.IFID.instr;
+                    newState.IFID.pcPlus1 = state.IFID.pcPlus1;
+                    newState.pc = state.pc;
+                    newState.IDEX.instr = NOOPINSTRUCTION;
+                    newState.IDEX.pcPlus1 = state.IFID.pcPlus1;
+                    newState.IDEX.readRegA = 0;
+                    newState.IDEX.readRegB = 0;
+                    newState.IDEX.offset = 0;
+                }
+        }
+        else {
+            newState.pc = state.pc + 1;
+            newState.IDEX.instr = state.IFID.instr;
+            newState.IDEX.pcPlus1 = state.IFID.pcPlus1;
+            newState.IDEX.readRegA = state.reg[field0(state.IFID.instr)];
+            newState.IDEX.readRegB = state.reg[field1(state.IFID.instr)];
+            newState.IDEX.offset = convertNum(field2(state.IFID.instr));
+        }
         
         /* --------------------- EX stage --------------------- */
 
@@ -280,7 +282,7 @@ void run(stateType state) {
             if (opcode(state.IDEX.instr) == LW || opcode(state.IDEX.instr) == SW)            botALU = state.IDEX.offset;
             else {
                 if      (field1(state.IDEX.instr) == destinationRegister(state.EXMEM.instr)) botALU = state.EXMEM.aluResult;
-                else if (field1(state.IDEX.instr) == destinationRegister(state.MEMWB.instr)) botALU = state.EXMEM.aluResult;
+                else if (field1(state.IDEX.instr) == destinationRegister(state.MEMWB.instr)) botALU = state.MEMWB.writeData;
                 else if (field1(state.IDEX.instr) == destinationRegister(state.WBEND.instr)) botALU = state.WBEND.writeData;
                 else                                                                         botALU = state.IDEX.readRegB;
             }
@@ -300,6 +302,13 @@ void run(stateType state) {
         else if(opcode(state.EXMEM.instr) == SW)
             newState.dataMem[state.EXMEM.aluResult] = state.EXMEM.readRegB;
 
+        if (opcode(state.EXMEM.instr) == BEQ && state.EXMEM.aluResult == state.EXMEM.readRegB*2) {
+            newState.pc = state.EXMEM.branchTarget;
+            newState.IFID.instr = NOOPINSTRUCTION;
+            newState.IDEX.instr = NOOPINSTRUCTION;
+            newState.EXMEM.instr = NOOPINSTRUCTION;
+        }
+
         /* --------------------- WB stage --------------------- */
 
         newState.WBEND.instr = state.MEMWB.instr;
@@ -315,20 +324,6 @@ void run(stateType state) {
                     cycle */
     }
 
-}
-
-void queueDataHazard(int hazards[], int reg) {
-    hazards[2] = hazards[1];
-    hazards[1] = hazards[0];
-    hazards[0] = reg;
-}
-
-//Returns -1 if no hazards found
-int checkDataHazards(int hazards[], int instr) {
-    for(int i = 0; i < 3; ++i) {
-        if(hazards[i] == 0) continue;
-        if(hazards[i] == field0(instr)) return 1;
-    }
 }
 
 int destinationRegister(int instr) {

@@ -237,6 +237,13 @@ void run(stateType state) {
 
         /* --------------------- ID stage --------------------- */
 
+        newState.pc = state.pc + 1;
+        newState.IDEX.instr = state.IFID.instr;
+        newState.IDEX.pcPlus1 = state.IFID.pcPlus1;
+        newState.IDEX.readRegA = state.reg[field0(state.IFID.instr)];
+        newState.IDEX.readRegB = state.reg[field1(state.IFID.instr)];
+        newState.IDEX.offset = convertNum(field2(state.IFID.instr));
+
         if(opcode(state.IDEX.instr) == LW) {
             if( (field1(state.IDEX.instr) == field0(state.IFID.instr)) ||
                 (field1(state.IDEX.instr) == field1(state.IFID.instr) && opcode(state.IFID.instr) != LW) ) {
@@ -249,14 +256,6 @@ void run(stateType state) {
                     newState.IDEX.readRegB = 0;
                     newState.IDEX.offset = 0;
                 }
-        }
-        else {
-            newState.pc = state.pc + 1;
-            newState.IDEX.instr = state.IFID.instr;
-            newState.IDEX.pcPlus1 = state.IFID.pcPlus1;
-            newState.IDEX.readRegA = state.reg[field0(state.IFID.instr)];
-            newState.IDEX.readRegB = state.reg[field1(state.IFID.instr)];
-            newState.IDEX.offset = convertNum(field2(state.IFID.instr));
         }
         
         /* --------------------- EX stage --------------------- */
@@ -272,6 +271,7 @@ void run(stateType state) {
             else if (field0(state.IDEX.instr) == destinationRegister(state.WBEND.instr)) topALU = state.WBEND.writeData;
             else                                                                         topALU = state.IDEX.readRegA;
         }
+        else topALU = 0;
 
         if(field1(state.IDEX.instr) != 0) {
             if      (field1(state.IDEX.instr) == destinationRegister(state.EXMEM.instr)) newState.EXMEM.readRegB = state.EXMEM.aluResult;
@@ -287,6 +287,14 @@ void run(stateType state) {
                 else                                                                         botALU = state.IDEX.readRegB;
             }
         }
+        else {
+            botALU = 0;
+            newState.EXMEM.readRegB = 0;
+        }
+
+        printf("topALU = %d\n",topALU);
+        printf("botALU = %d\n",botALU);
+        printf("readRegB = %d\n",newState.EXMEM.readRegB);
 
         if (opcode(state.IDEX.instr) == NAND)
             newState.EXMEM.aluResult = ~(topALU & botALU);

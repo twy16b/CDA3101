@@ -1,7 +1,6 @@
-assembler
 LC3101a.c
-output.txt
-sampleOutput.txt
+assembler
 simulate
-test.as
-test.mc
+*.as
+*.mc
+*.txt
